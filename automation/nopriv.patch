@@ -1,0 +1,120 @@
+diff --git a/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt b/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt
+index 9a6bb86..9bc1c7a 100644
+--- a/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt
++++ b/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt
+@@ -52,9 +52,11 @@ class DefaultBrowsingModeManager(
+ ) : BrowsingModeManager {
+     override var mode: BrowsingMode = BrowsingMode.Normal
+         set(value) {
+-            field = value
+-            settings.lastKnownMode = value
+-            onModeChange(value)
++            // Private browsing is disabled in this build: the mode is always Normal.
++            val safeValue = if (value.isPrivate) BrowsingMode.Normal else value
++            field = safeValue
++            settings.lastKnownMode = safeValue
++            onModeChange(safeValue)
+         }
+ 
+     init {
+diff --git a/app/src/main/java/org/mozilla/fenix/components/Core.kt b/app/src/main/java/org/mozilla/fenix/components/Core.kt
+index e74f50a..25b6c48 100644
+--- a/app/src/main/java/org/mozilla/fenix/components/Core.kt
++++ b/app/src/main/java/org/mozilla/fenix/components/Core.kt
+@@ -147,6 +147,7 @@ import org.mozilla.fenix.summarization.eligibility.DefaultSummarizationEligibili
+ import org.mozilla.fenix.summarization.eligibility.SummarizationEligibilityChecker
+ import org.mozilla.fenix.summarization.onboarding.FenixSummarizationFeatureConfiguration
+ import org.mozilla.fenix.summarization.onboarding.SummarizationFeatureDiscoveryConfiguration
++import org.mozilla.fenix.nopriv.NoPrivateTabsMiddleware
+ import org.mozilla.fenix.tabgroups.middleware.TabGroupMiddleware
+ import org.mozilla.fenix.telemetry.TelemetryMiddleware
+ import org.mozilla.fenix.translations.TranslationsEnabledSettings
+@@ -203,7 +204,7 @@ class Core(
+                 parallelMarkingEnabled = FxNimbus.features.javascript.value().parallelMarkingEnabled,
+                 certificateTransparencyMode = FxNimbus.features.pki.value().certificateTransparencyMode,
+                 postQuantumKeyExchangeEnabled = FxNimbus.features.pqcrypto.value().postQuantumKeyExchangeEnabled,
+-                dohAutoselectEnabled = FxNimbus.features.doh.value().autoselectEnabled,
++                dohAutoselectEnabled = false,
+                 bannedPorts = FxNimbus.features.networkingBannedPorts.value().bannedPortList,
+                 lnaBlockingEnabled = context.components.settings.isLnaBlockingEnabled,
+                 lnaFeatureEnabled = context.components.settings.isLnaFeatureEnabled,
+@@ -412,6 +413,7 @@ class Core(
+                 AboutHomeMiddleware(homepageTitle = context.getString(R.string.tab_tray_homepage_tab)),
+                 BrowserVisualCompletenessMiddleware(visualCompletenessQueue),
+                 TabGroupMiddleware(tabGroupRepository = tabGroupRepository, scope = applicationScope),
++                NoPrivateTabsMiddleware(),
+             )
+ 
+         BrowserStore(
+diff --git a/app/src/main/java/org/mozilla/fenix/nopriv/NoPrivateTabsMiddleware.kt b/app/src/main/java/org/mozilla/fenix/nopriv/NoPrivateTabsMiddleware.kt
+new file mode 100644
+index 0000000..fb63d13
+--- /dev/null
++++ b/app/src/main/java/org/mozilla/fenix/nopriv/NoPrivateTabsMiddleware.kt
+@@ -0,0 +1,32 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.nopriv
++
++import mozilla.components.browser.state.action.BrowserAction
++import mozilla.components.browser.state.action.TabListAction
++import mozilla.components.browser.state.state.BrowserState
++import mozilla.components.lib.state.Middleware
++import mozilla.components.lib.state.Store
++
++/**
++ * Safety net: closes every private tab as soon as one exists in the [BrowserState],
++ * no matter which code path created it.
++ */
++class NoPrivateTabsMiddleware : Middleware<BrowserState, BrowserAction> {
++
++    override fun invoke(
++        store: Store<BrowserState, BrowserAction>,
++        next: (BrowserAction) -> Unit,
++        action: BrowserAction,
++    ) {
++        next(action)
++
++        if (action !is TabListAction.RemoveAllPrivateTabsAction &&
++            store.state.tabs.any { it.content.private }
++        ) {
++            store.dispatch(TabListAction.RemoveAllPrivateTabsAction)
++        }
++    }
++}
+diff --git a/app/src/main/java/org/mozilla/fenix/utils/Settings.kt b/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
+index fd3ea3d..c77bef7 100644
+--- a/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
++++ b/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
+@@ -3228,11 +3228,8 @@ class Settings(
+         )
+ 
+     /** Indicates whether or not to show the entry point for the DNS over HTTPS settings */
+-    val showDohEntryPoint by
+-        booleanPreference(
+-            key = appContext.getPreferenceKey(R.string.pref_key_doh_settings_enabled),
+-            default = { FxNimbus.features.doh.value().showUi },
+-        )
++    val showDohEntryPoint: Boolean
++        get() = false // DoH is disabled in this build so the network's DNS filter is always respected.
+ 
+     /**
+      * Stores the current DoH mode as an integer preference.
+@@ -3276,13 +3273,8 @@ class Settings(
+ 
+     /** Retrieves the current DohSettingsMode based on trrMode */
+     fun getDohSettingsMode(): Engine.DohSettingsMode {
+-        return when (trrMode) {
+-            DOH_SETTINGS_DEFAULT -> Engine.DohSettingsMode.DEFAULT
+-            DOH_SETTINGS_INCREASED -> Engine.DohSettingsMode.INCREASED
+-            DOH_SETTINGS_MAX -> Engine.DohSettingsMode.MAX
+-            DOH_SETTINGS_OFF -> Engine.DohSettingsMode.OFF
+-            else -> Engine.DohSettingsMode.DEFAULT
+-        }
++        // Always OFF in this build, regardless of the stored value.
++        return Engine.DohSettingsMode.OFF
+     }
+ 
+     /** Updates trrMode by converting the given DohSettingsMode */
