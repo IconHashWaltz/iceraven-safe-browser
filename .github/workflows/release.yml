@@ -28,7 +28,10 @@ jobs:
 
       - name: Create version name
         run: echo "VERSION_NAME=$(git describe --tags HEAD)" >> $GITHUB_ENV
-
+        
+      - name: Apply no-private patch
+        run: git apply --ignore-whitespace automation/nopriv.patch
+        
       - name: Patch on the fly
         run: |
           ./automation/iceraven/patch_android_components.sh
